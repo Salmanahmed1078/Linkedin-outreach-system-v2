@@ -28,12 +28,7 @@ export default async function DashboardPage() {
     totalCommented: 0,
     uniqueCompanies: 0,
     uniqueRoles: [],
-    totalDMs: 0,
-    pendingReview: 0,
-    needsRevision: 0,
-    approved: 0,
-    regenerated: 0,
-    approvalRate: 0,
+    totalLeads: 0,
     engagementRate: 0,
     topCompanies: [],
     topRoles: [],
@@ -41,7 +36,6 @@ export default async function DashboardPage() {
   let analytics: AnalyticsData = {
     postsOverTime: [],
     engagementBreakdown: [],
-    approvalStatus: [],
     companyDistribution: [],
     roleDistribution: [],
   };

@@ -80,8 +80,18 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
 
   // Combine scraped data and combined leads into one unified list
   const allLeads = useMemo(() => {
+    // Define the lead type
+    type LeadEntry = {
+      rowId: string;
+      'Linkedin Post': string;
+      'First Name': string;
+      'Last Name': string;
+      'Profile URL': string;
+      source: 'scraped' | 'combined';
+    };
+    
     // Convert scraped data to lead format
-    const scrapedLeads = scrapedData.map(entry => ({
+    const scrapedLeads: LeadEntry[] = scrapedData.map(entry => ({
       rowId: `scraped-${entry.rowId}`,
       'Linkedin Post': entry['Linkedin Post'],
       'First Name': entry['First Name'],
@@ -91,7 +101,7 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
     }));
     
     // Convert combined leads
-    const combinedLeads = dmData.map(entry => ({
+    const combinedLeads: LeadEntry[] = dmData.map(entry => ({
       rowId: `combined-${entry.rowId}`,
       'Linkedin Post': entry['Linkedin Post'],
       'First Name': entry['First Name'],
@@ -102,7 +112,7 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
     
     // Merge and remove duplicates based on LinkedIn Post URL + First Name + Last Name
     const seen = new Set<string>();
-    const merged: Array<typeof scrapedLeads[0] & { source: 'scraped' | 'combined' }> = [];
+    const merged: LeadEntry[] = [];
     
     [...scrapedLeads, ...combinedLeads].forEach(lead => {
       const key = `${lead['Linkedin Post']}_${lead['First Name']}_${lead['Last Name']}`;
@@ -253,13 +263,13 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
   const filteredCompanies = useMemo(() => {
     if (!companySearch) return uniqueCompanies;
     const search = companySearch.toLowerCase();
-    return uniqueCompanies.filter(c => c.toLowerCase().includes(search));
+    return uniqueCompanies.filter(c => c && c.toLowerCase().includes(search));
   }, [uniqueCompanies, companySearch]);
 
   const filteredRoles = useMemo(() => {
     if (!roleSearch) return uniqueRoles;
     const search = roleSearch.toLowerCase();
-    return uniqueRoles.filter(r => r.toLowerCase().includes(search));
+    return uniqueRoles.filter(r => r && r.toLowerCase().includes(search));
   }, [uniqueRoles, roleSearch]);
 
   // Group scraped data by post

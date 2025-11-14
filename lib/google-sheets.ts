@@ -115,7 +115,7 @@ async function fetchScrapedDataSheet(gid: number, postTopic?: string, postUrl?: 
       if (!profileUrl && !linkedinPost && !linkedInPostUser) continue; // Must have at least post or profile link
 
       // Optional fields - only include if they exist in the sheet
-      let aboutValue: string | undefined = getCell(row, headers, 'About');
+      let aboutValue: string | undefined = getCell(row, headers, 'About') || undefined;
       if (!aboutValue || aboutValue.trim() === '') {
         const aboutHeaderIndex = headers.findIndex(h => 
           h && h.toLowerCase().trim().includes('about')
@@ -223,22 +223,17 @@ async function fetchDMDataSheet(gid: number, postTopic?: string, postUrl?: strin
         }
       }
 
+      // Simplified DMEntry - only basic fields
       const entry: DMEntry = {
         rowId: rowCounter++,
         'Linkedin Post': getCell(row, headers, 'Linkedin Post') || postUrl || '',
         'First Name': getCell(row, headers, 'First Name') || '',
         'Last Name': getCell(row, headers, 'Last Name') || '',
-        Company: getCell(row, headers, 'Company') || '',
-        Role: getCell(row, headers, 'Role') || '',
-        Headline: getCell(row, headers, 'Headline') || '',
-        About: aboutValue || '',
-        DM: getCell(row, headers, 'DM') || '',
-        Approval: (getCell(row, headers, 'Approval') || 'Pending Review') as DMEntry['Approval'],
-        Feedback: getCell(row, headers, 'Feedback') || undefined,
+        'Profile URL': getCell(row, headers, 'Profile URL') || '',
         post_topic: postTopic,
       };
 
-      if (entry['First Name'] || entry.DM) {
+      if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
         entries.push(entry);
       }
     }
@@ -348,23 +343,18 @@ async function fetchSheetByGidOrName(gidOrName: string | number): Promise<DMEntr
       }
       aboutValue = aboutValue || '';
 
+      // Simplified DMEntry - only basic fields
       const entry: DMEntry = {
-        rowId: rowCounter++, // Use sequential counter as ID
+        rowId: rowCounter++,
         'Linkedin Post': getCell(row, headers, 'Linkedin Post') || '',
         'First Name': getCell(row, headers, 'First Name') || '',
         'Last Name': getCell(row, headers, 'Last Name') || '',
-        Company: getCell(row, headers, 'Company') || '',
-        Role: getCell(row, headers, 'Role') || '',
-        Headline: getCell(row, headers, 'Headline') || '',
-        About: aboutValue,
-        DM: getCell(row, headers, 'DM') || '',
-        Approval: (getCell(row, headers, 'Approval') || 'Pending Review') as DMEntry['Approval'],
-        Feedback: getCell(row, headers, 'Feedback') || undefined,
+        'Profile URL': getCell(row, headers, 'Profile URL') || '',
         post_topic: getCell(row, headers, 'Post Topic') || undefined,
       };
 
-      // Only add if it has at least a name or DM content
-      if (entry['First Name'] || entry.DM) {
+      // Only add if it has at least a name or profile URL
+      if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
         dmEntries.push(entry);
       }
     }
@@ -641,21 +631,16 @@ export async function fetchAllDMData(): Promise<DMEntry[]> {
                     approvalValue = 'Pending Review';
                   }
                   
+                  // Simplified DMEntry - only basic fields
                   const entry: DMEntry = {
                     rowId: rowCounter++,
                     'Linkedin Post': getCell(row, headers, 'Linkedin Post') || '',
                     'First Name': getCell(row, headers, 'First Name') || '',
                     'Last Name': getCell(row, headers, 'Last Name') || '',
-                    Company: getCell(row, headers, 'Company') || '',
-                    Role: getCell(row, headers, 'Role') || '',
-                    Headline: getCell(row, headers, 'Headline') || '',
-                    About: aboutValue,
-                    DM: getCell(row, headers, 'DM') || '',
-                    Approval: (approvalValue || 'Pending Review') as DMEntry['Approval'],
-                    Feedback: getCell(row, headers, 'Feedback') || undefined,
+                    'Profile URL': getCell(row, headers, 'Profile URL') || '',
                   };
                   
-                  if (entry['First Name'] || entry.DM) {
+                  if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
                     entries.push(entry);
                   }
                 }
@@ -695,9 +680,9 @@ export async function fetchAllDMData(): Promise<DMEntry[]> {
     
     // Remove duplicates based on name + company + DM content
     const uniqueEntries = allEntries.filter((entry, index, self) => {
-      const key = `${entry['First Name']}_${entry['Last Name']}_${entry.Company}_${entry.DM?.substring(0, 50) || ''}`;
+      const key = `${entry['Linkedin Post']}_${entry['First Name']}_${entry['Last Name']}`;
       return index === self.findIndex(e => 
-        `${e['First Name']}_${e['Last Name']}_${e.Company}_${e.DM?.substring(0, 50) || ''}` === key
+        `${e['Linkedin Post']}_${e['First Name']}_${e['Last Name']}` === key
       );
     });
     
