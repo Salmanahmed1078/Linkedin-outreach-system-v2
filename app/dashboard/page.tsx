@@ -2,11 +2,12 @@ import {
   fetchIndexSheetData, 
   fetchAllScrapedData, 
   fetchAllDMData, 
+  fetchSendMessageData,
   calculateStats, 
   generateAnalyticsData 
 } from '@/lib/google-sheets';
 import DashboardClient from '@/components/DashboardClient';
-import { IndexEntry, ScrapedDataEntry, DMEntry, DashboardStats, AnalyticsData } from '@/lib/types';
+import { IndexEntry, ScrapedDataEntry, DMEntry, SendMessageEntry, DashboardStats, AnalyticsData } from '@/lib/types';
 
 export const metadata = {
   title: 'Dashboard - ChatWalrus',
@@ -21,6 +22,7 @@ export default async function DashboardPage() {
   let indexEntries: IndexEntry[] = [];
   let scrapedEntries: ScrapedDataEntry[] = [];
   let dmEntries: DMEntry[] = [];
+  let sendMessageEntries: SendMessageEntry[] = [];
   let stats: DashboardStats = {
     totalPosts: 0,
     totalScraped: 0,
@@ -52,6 +54,9 @@ export default async function DashboardPage() {
     console.log('Fetching DM data...');
     dmEntries = await fetchAllDMData();
     
+    console.log('Fetching Send_Message data...');
+    sendMessageEntries = await fetchSendMessageData();
+    
     // Calculate stats and analytics
     stats = calculateStats(indexEntries, scrapedEntries, dmEntries);
     analytics = generateAnalyticsData(indexEntries, scrapedEntries, dmEntries);
@@ -60,6 +65,7 @@ export default async function DashboardPage() {
       posts: indexEntries.length,
       scraped: scrapedEntries.length,
       dms: dmEntries.length,
+      sendMessages: sendMessageEntries.length,
     });
   } catch (err) {
     console.error('Error loading dashboard data:', err);
@@ -71,6 +77,7 @@ export default async function DashboardPage() {
       indexData={indexEntries}
       scrapedData={scrapedEntries}
       dmData={dmEntries}
+      sendMessageData={sendMessageEntries}
       stats={stats}
       analytics={analytics}
       error={error}

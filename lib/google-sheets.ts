@@ -15,7 +15,7 @@
 //   Create an API route at /api/dm-data that calls fetchDMSheetData()
 //   Then use fetch('/api/dm-data') in your client component
 
-import { DMEntry, ScrapedDataEntry, IndexEntry, DashboardStats, AnalyticsData } from './types';
+import { DMEntry, ScrapedDataEntry, IndexEntry, DashboardStats, AnalyticsData, SendMessageEntry } from './types';
 
 const SHEET_ID = '11GQ7hgeSR_5ZmBWBwfzWRLLO3jppfGSlqR2zBrIORHY';
 
@@ -115,7 +115,7 @@ async function fetchScrapedDataSheet(gid: number, postTopic?: string, postUrl?: 
       if (!profileUrl && !linkedinPost && !linkedInPostUser) continue; // Must have at least post or profile link
 
       // Optional fields - only include if they exist in the sheet
-      let aboutValue: string | undefined = getCell(row, headers, 'About') || undefined;
+      let aboutValue: string | undefined = getCell(row, headers, 'About');
       if (!aboutValue || aboutValue.trim() === '') {
         const aboutHeaderIndex = headers.findIndex(h => 
           h && h.toLowerCase().trim().includes('about')
@@ -223,17 +223,22 @@ async function fetchDMDataSheet(gid: number, postTopic?: string, postUrl?: strin
         }
       }
 
-      // Simplified DMEntry - only basic fields
       const entry: DMEntry = {
         rowId: rowCounter++,
         'Linkedin Post': getCell(row, headers, 'Linkedin Post') || postUrl || '',
         'First Name': getCell(row, headers, 'First Name') || '',
         'Last Name': getCell(row, headers, 'Last Name') || '',
-        'Profile URL': getCell(row, headers, 'Profile URL') || '',
+        Company: getCell(row, headers, 'Company') || '',
+        Role: getCell(row, headers, 'Role') || '',
+        Headline: getCell(row, headers, 'Headline') || '',
+        About: aboutValue || '',
+        DM: getCell(row, headers, 'DM') || '',
+        Approval: (getCell(row, headers, 'Approval') || 'Pending Review') as DMEntry['Approval'],
+        Feedback: getCell(row, headers, 'Feedback') || undefined,
         post_topic: postTopic,
       };
 
-      if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
+      if (entry['First Name'] || entry.DM) {
         entries.push(entry);
       }
     }
@@ -343,18 +348,23 @@ async function fetchSheetByGidOrName(gidOrName: string | number): Promise<DMEntr
       }
       aboutValue = aboutValue || '';
 
-      // Simplified DMEntry - only basic fields
       const entry: DMEntry = {
-        rowId: rowCounter++,
+        rowId: rowCounter++, // Use sequential counter as ID
         'Linkedin Post': getCell(row, headers, 'Linkedin Post') || '',
         'First Name': getCell(row, headers, 'First Name') || '',
         'Last Name': getCell(row, headers, 'Last Name') || '',
-        'Profile URL': getCell(row, headers, 'Profile URL') || '',
+        Company: getCell(row, headers, 'Company') || '',
+        Role: getCell(row, headers, 'Role') || '',
+        Headline: getCell(row, headers, 'Headline') || '',
+        About: aboutValue,
+        DM: getCell(row, headers, 'DM') || '',
+        Approval: (getCell(row, headers, 'Approval') || 'Pending Review') as DMEntry['Approval'],
+        Feedback: getCell(row, headers, 'Feedback') || undefined,
         post_topic: getCell(row, headers, 'Post Topic') || undefined,
       };
 
-      // Only add if it has at least a name or profile URL
-      if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
+      // Only add if it has at least a name or DM content
+      if (entry['First Name'] || entry.DM) {
         dmEntries.push(entry);
       }
     }
@@ -631,16 +641,21 @@ export async function fetchAllDMData(): Promise<DMEntry[]> {
                     approvalValue = 'Pending Review';
                   }
                   
-                  // Simplified DMEntry - only basic fields
                   const entry: DMEntry = {
                     rowId: rowCounter++,
                     'Linkedin Post': getCell(row, headers, 'Linkedin Post') || '',
                     'First Name': getCell(row, headers, 'First Name') || '',
                     'Last Name': getCell(row, headers, 'Last Name') || '',
-                    'Profile URL': getCell(row, headers, 'Profile URL') || '',
+                    Company: getCell(row, headers, 'Company') || '',
+                    Role: getCell(row, headers, 'Role') || '',
+                    Headline: getCell(row, headers, 'Headline') || '',
+                    About: aboutValue,
+                    DM: getCell(row, headers, 'DM') || '',
+                    Approval: (approvalValue || 'Pending Review') as DMEntry['Approval'],
+                    Feedback: getCell(row, headers, 'Feedback') || undefined,
                   };
                   
-                  if (entry['First Name'] || entry['Last Name'] || entry['Profile URL']) {
+                  if (entry['First Name'] || entry.DM) {
                     entries.push(entry);
                   }
                 }
@@ -680,9 +695,9 @@ export async function fetchAllDMData(): Promise<DMEntry[]> {
     
     // Remove duplicates based on name + company + DM content
     const uniqueEntries = allEntries.filter((entry, index, self) => {
-      const key = `${entry['Linkedin Post']}_${entry['First Name']}_${entry['Last Name']}`;
+      const key = `${entry['First Name']}_${entry['Last Name']}_${entry.Company}_${entry.DM?.substring(0, 50) || ''}`;
       return index === self.findIndex(e => 
-        `${e['Linkedin Post']}_${e['First Name']}_${e['Last Name']}` === key
+        `${e['First Name']}_${e['Last Name']}_${e.Company}_${e.DM?.substring(0, 50) || ''}` === key
       );
     });
     
@@ -1045,5 +1060,91 @@ function parseIndexSheet(rows: string[][]): IndexEntry[] {
   
   console.log(`Parsed ${indexData.length} posts from Index sheet`);
   return indexData;
+}
+
+/**
+ * Fetch data from Send_Message sheet
+ * Sheet contains messages awaiting approval with fields:
+ * - Linkedin Post, First Name, Last Name, Profile URL, Headline, Company, Approval
+ */
+export async function fetchSendMessageData(): Promise<SendMessageEntry[]> {
+  try {
+    const sheetName = 'Send_Message';
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+    const response = await fetch(url, { cache: 'no-store' });
+
+    if (!response.ok) {
+      console.log(`Send_Message sheet returned status ${response.status}`);
+      return [];
+    }
+
+    const csvText = await response.text();
+    if (!csvText || csvText.trim().length === 0 || csvText.includes('<!DOCTYPE')) {
+      console.log(`Send_Message sheet returned empty or invalid response`);
+      return [];
+    }
+
+    const rows = parseCSV(csvText);
+    if (rows.length === 0 || rows.length === 1) {
+      console.log(`Send_Message sheet has no data rows`);
+      return [];
+    }
+
+    const headers = rows[0];
+    console.log(`Send_Message sheet headers:`, headers.filter(h => h).map(h => h.trim()));
+
+    const entries: SendMessageEntry[] = [];
+    let rowCounter = 1;
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.every(cell => !cell || cell.trim() === '')) continue;
+
+      const linkedinPost = getCell(row, headers, 'Linkedin Post') || getCell(row, headers, 'LinkedIn Post') || '';
+      const firstName = getCell(row, headers, 'First Name') || '';
+      const lastName = getCell(row, headers, 'Last Name') || '';
+      const profileUrl = getCell(row, headers, 'Profile URL') || '';
+      const headline = getCell(row, headers, 'Headline') || undefined;
+      const company = getCell(row, headers, 'Company') || undefined;
+      
+      // Get approval status - normalize to lowercase and handle variations
+      // Default is 'approval' if not set
+      let approvalValue = getCell(row, headers, 'Approval') || 'approval';
+      approvalValue = approvalValue.trim().toLowerCase();
+      
+      // Normalize approval values - only three options: approval, reject, sent
+      let approval: SendMessageEntry['Approval'] = 'approval'; // default
+      if (approvalValue === 'approve' || approvalValue === 'approved' || approvalValue === 'approval') {
+        approval = 'approval';
+      } else if (approvalValue === 'reject' || approvalValue === 'rejected') {
+        approval = 'reject';
+      } else if (approvalValue === 'sent') {
+        approval = 'sent';
+      } else {
+        // Default to approval if value is not recognized
+        approval = 'approval';
+      }
+
+      // Only add entries with at least a name or profile URL
+      if (firstName || lastName || profileUrl) {
+        entries.push({
+          rowId: rowCounter++,
+          'Linkedin Post': linkedinPost,
+          'First Name': firstName,
+          'Last Name': lastName,
+          'Profile URL': profileUrl,
+          Headline: headline && headline.trim() ? headline.trim() : undefined,
+          Company: company && company.trim() ? company.trim() : undefined,
+          Approval: approval,
+        });
+      }
+    }
+
+    console.log(`Parsed ${entries.length} entries from Send_Message sheet`);
+    return entries;
+  } catch (error) {
+    console.error('Error fetching Send_Message sheet data:', error);
+    return [];
+  }
 }
 

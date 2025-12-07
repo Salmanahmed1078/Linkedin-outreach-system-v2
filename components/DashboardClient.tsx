@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { ScrapedDataEntry, DMEntry, IndexEntry, DashboardStats, AnalyticsData } from '@/lib/types';
+import { ScrapedDataEntry, DMEntry, IndexEntry, SendMessageEntry, DashboardStats, AnalyticsData } from '@/lib/types';
 import Sidebar from '@/components/dashboard/Sidebar';
 // FeedbackModal removed - no longer needed for Combined Leads
 import { 
@@ -24,12 +24,13 @@ interface DashboardClientProps {
   indexData: IndexEntry[];
   scrapedData: ScrapedDataEntry[];
   dmData: DMEntry[];
+  sendMessageData: SendMessageEntry[];
   stats: DashboardStats;
   analytics: AnalyticsData;
   error: string | null;
 }
 
-type ViewType = 'overview' | 'posts' | 'dms';
+type ViewType = 'overview' | 'posts' | 'dms' | 'messages';
 
 // Chart colors
 const CHART_COLORS = {
@@ -43,7 +44,77 @@ const CHART_COLORS = {
 
 const PIE_COLORS = ['#0ea5e9', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'];
 
-export default function DashboardClient({ indexData, scrapedData, dmData, stats, analytics, error }: DashboardClientProps) {
+export default function DashboardClient({ indexData, scrapedData, dmData, sendMessageData, stats, analytics, error }: DashboardClientProps) {
+  // Helper function to get post author name from LinkedIn post URL
+  // Matches the URL to scraped data to get the accurate author name
+  const getPostAuthorName = (linkedInPostUrl: string): string => {
+    if (!linkedInPostUrl) return "LinkedIn Post";
+    
+    // Normalize URL for comparison (remove protocol, www, trailing slashes)
+    const normalizeUrl = (url: string): string => {
+      return url
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/$/, '');
+    };
+    
+    const normalizedPostUrl = normalizeUrl(linkedInPostUrl);
+    
+    // Find matching scraped data entry by LinkedIn Post URL
+    const matchingEntry = scrapedData.find(entry => {
+      if (!entry['Linkedin Post']) return false;
+      const normalizedEntryUrl = normalizeUrl(entry['Linkedin Post']);
+      return normalizedEntryUrl === normalizedPostUrl;
+    });
+    
+    // If found, use the LinkedIn Post User (author name) from scraped data
+    if (matchingEntry && matchingEntry['LinkedIn Post User']) {
+      return matchingEntry['LinkedIn Post User'] + "'s post";
+    }
+    
+    // Fallback: try to match with indexData (posts)
+    const matchingPost = indexData.find(post => {
+      if (!post.postUrl) return false;
+      const normalizedPostUrlFromIndex = normalizeUrl(post.postUrl);
+      return normalizedPostUrlFromIndex === normalizedPostUrl;
+    });
+    
+    // If we found a matching post, try to get author from its scraped data
+    if (matchingPost) {
+      const postScraped = scrapedData.filter(e => e.post_gid === matchingPost.gid);
+      const postAuthorEntry = postScraped.find(e => e['LinkedIn Post User']);
+      if (postAuthorEntry && postAuthorEntry['LinkedIn Post User']) {
+        return postAuthorEntry['LinkedIn Post User'] + "'s post";
+      }
+    }
+    
+    // Final fallback: try to extract from URL (less accurate)
+    try {
+      const postsMatch = linkedInPostUrl.match(/\/posts\/([^\/\?]+)/);
+      if (postsMatch && postsMatch[1]) {
+        const postId = postsMatch[1];
+        const parts = postId.split('_');
+        const namePart = parts[0];
+        const nameComponents = namePart.split('-');
+        const nameWords = nameComponents.filter(part => !/^\d+$/.test(part));
+        
+        if (nameWords.length >= 2) {
+          const firstName = nameWords[0].charAt(0).toUpperCase() + nameWords[0].slice(1);
+          const lastName = nameWords[nameWords.length - 1].charAt(0).toUpperCase() + nameWords[nameWords.length - 1].slice(1);
+          return `${firstName} ${lastName}'s post`;
+        } else if (nameWords.length === 1) {
+          const name = nameWords[0].charAt(0).toUpperCase() + nameWords[0].slice(1);
+          return `${name}'s post`;
+        }
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+    
+    return "LinkedIn Post";
+  };
   const [activeView, setActiveView] = useState<ViewType>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedScrapedEntry, setSelectedScrapedEntry] = useState<ScrapedDataEntry | null>(null);
@@ -78,20 +149,16 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
   // Post filter for Combined Leads
   const [selectedPostForLeads, setSelectedPostForLeads] = useState<IndexEntry | null>(null);
 
+  // Messages Approval view state
+  const [messageSearchTerm, setMessageSearchTerm] = useState('');
+  const [updatingMessageId, setUpdatingMessageId] = useState<number | null>(null);
+  const [localSendMessageData, setLocalSendMessageData] = useState<SendMessageEntry[]>(sendMessageData);
+  const [expandedHeadlines, setExpandedHeadlines] = useState<Set<number>>(new Set());
+
   // Combine scraped data and combined leads into one unified list
   const allLeads = useMemo(() => {
-    // Define the lead type
-    type LeadEntry = {
-      rowId: string;
-      'Linkedin Post': string;
-      'First Name': string;
-      'Last Name': string;
-      'Profile URL': string;
-      source: 'scraped' | 'combined';
-    };
-    
     // Convert scraped data to lead format
-    const scrapedLeads: LeadEntry[] = scrapedData.map(entry => ({
+    const scrapedLeads = scrapedData.map(entry => ({
       rowId: `scraped-${entry.rowId}`,
       'Linkedin Post': entry['Linkedin Post'],
       'First Name': entry['First Name'],
@@ -101,7 +168,7 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
     }));
     
     // Convert combined leads
-    const combinedLeads: LeadEntry[] = dmData.map(entry => ({
+    const combinedLeads = dmData.map(entry => ({
       rowId: `combined-${entry.rowId}`,
       'Linkedin Post': entry['Linkedin Post'],
       'First Name': entry['First Name'],
@@ -112,7 +179,7 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
     
     // Merge and remove duplicates based on LinkedIn Post URL + First Name + Last Name
     const seen = new Set<string>();
-    const merged: LeadEntry[] = [];
+    const merged: Array<typeof scrapedLeads[0] & { source: 'scraped' | 'combined' }> = [];
     
     [...scrapedLeads, ...combinedLeads].forEach(lead => {
       const key = `${lead['Linkedin Post']}_${lead['First Name']}_${lead['Last Name']}`;
@@ -263,13 +330,13 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
   const filteredCompanies = useMemo(() => {
     if (!companySearch) return uniqueCompanies;
     const search = companySearch.toLowerCase();
-    return uniqueCompanies.filter(c => c && c.toLowerCase().includes(search));
+    return uniqueCompanies.filter(c => c.toLowerCase().includes(search));
   }, [uniqueCompanies, companySearch]);
 
   const filteredRoles = useMemo(() => {
     if (!roleSearch) return uniqueRoles;
     const search = roleSearch.toLowerCase();
-    return uniqueRoles.filter(r => r && r.toLowerCase().includes(search));
+    return uniqueRoles.filter(r => r.toLowerCase().includes(search));
   }, [uniqueRoles, roleSearch]);
 
   // Group scraped data by post
@@ -377,7 +444,136 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
     return filtered;
   }, [scrapedData, searchTerm, selectedPost, selectedPosts, selectedCompanies, selectedRoles, selectedEngagementTypes]);
 
-  // All approval-related functions removed - Combined Leads is a simple list
+  // Update local state when prop changes
+  useEffect(() => {
+    setLocalSendMessageData(sendMessageData);
+  }, [sendMessageData]);
+
+  // Filter messages
+  const filteredMessages = useMemo(() => {
+    let filtered = localSendMessageData;
+    
+    if (messageSearchTerm) {
+      const search = messageSearchTerm.toLowerCase().trim();
+      filtered = filtered.filter(entry => {
+        const firstName = (entry['First Name'] || '').toLowerCase();
+        const lastName = (entry['Last Name'] || '').toLowerCase();
+        const company = (entry.Company || '').toLowerCase().trim();
+        const headline = (entry.Headline || '').toLowerCase();
+        const linkedinPost = (entry['Linkedin Post'] || '').toLowerCase();
+        
+        return firstName.includes(search) ||
+               lastName.includes(search) ||
+               company.includes(search) ||
+               headline.includes(search) ||
+               linkedinPost.includes(search);
+      });
+    }
+    
+    return filtered;
+  }, [localSendMessageData, messageSearchTerm]);
+
+  // Handle approval status update
+  const handleMessageApprovalUpdate = async (entry: SendMessageEntry, newApproval: SendMessageEntry['Approval']) => {
+    // Prevent users from manually setting "sent" status - it's system-managed
+    if (newApproval === 'sent') {
+      alert('"Sent" status is system-managed and cannot be set manually. Please select "Approved" or "Rejected".');
+      return;
+    }
+    
+    // Prevent updating if already sent
+    if (entry.Approval === 'sent') {
+      alert('This message has already been sent and cannot be modified.');
+      return;
+    }
+    
+    setUpdatingMessageId(entry.rowId);
+    
+    try {
+      // Optimistically update local state
+      setLocalSendMessageData(prev => 
+        prev.map(msg => 
+          msg.rowId === entry.rowId 
+            ? { ...msg, Approval: newApproval }
+            : msg
+        )
+      );
+
+      // Call API to update
+      const response = await fetch('/api/message/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rowId: entry.rowId,
+          approval: newApproval,
+          linkedinPost: entry['Linkedin Post'],
+          firstName: entry['First Name'],
+          lastName: entry['Last Name'],
+        }),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        console.error('API Error Response:', responseData);
+        const errorMessage = responseData.details || responseData.error || 'Failed to update approval status';
+        throw new Error(errorMessage);
+      }
+
+      // Check if update was actually successful
+      if (responseData.success === false || responseData.warning) {
+        console.warn('Update warning:', responseData.warning || responseData.message);
+        // Still show success but warn user
+        if (responseData.warning) {
+          alert(`Update may not have been saved to Google Sheet: ${responseData.warning}`);
+        }
+      }
+
+      // Show success notification
+      console.log('Approval status updated successfully:', responseData);
+      
+      // Show success message to user
+      alert('Approval status updated successfully in Google Sheet!');
+    } catch (error) {
+      console.error('Error updating approval status:', error);
+      
+      // Revert optimistic update on error
+      setLocalSendMessageData(prev => 
+        prev.map(msg => 
+          msg.rowId === entry.rowId 
+            ? { ...msg, Approval: entry.Approval }
+            : msg
+        )
+      );
+      
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update approval status';
+      alert(`Failed to update approval status: ${errorMessage}\n\nPlease check:\n1. Google Apps Script is deployed\n2. Script URL is correct in .env.local\n3. Script is authorized`);
+    } finally {
+      setUpdatingMessageId(null);
+    }
+  };
+
+  // Get approval badge styling
+  const getApprovalBadge = (approval: SendMessageEntry['Approval']) => {
+    const styles = {
+      approval: 'bg-green-100 text-green-800 border-green-200',
+      reject: 'bg-red-100 text-red-800 border-red-200',
+      sent: 'bg-blue-100 text-blue-800 border-blue-200',
+    };
+    
+    const labels = {
+      approval: 'Approved',
+      reject: 'Rejected',
+      sent: 'Sent',
+    };
+    
+    return {
+      className: `px-3 py-1 rounded-full text-xs font-semibold border ${styles[approval]}`,
+      label: labels[approval],
+    };
+  };
 
   if (error) {
     return (
@@ -414,11 +610,13 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
                 {activeView === 'overview' && 'Dashboard Overview'}
                 {activeView === 'posts' && 'LinkedIn Posts'}
                 {activeView === 'dms' && 'All Leads'}
+                {activeView === 'messages' && 'Messages Approval'}
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
                 {activeView === 'overview' && 'Quick overview of your campaigns'}
                 {activeView === 'posts' && 'All posts being tracked in your campaigns'}
                 {activeView === 'dms' && 'All leads from scraped data and combined leads, filtered by post'}
+                {activeView === 'messages' && 'Review and approve messages before sending'}
               </p>
             </div>
           </div>
@@ -1115,6 +1313,238 @@ export default function DashboardClient({ indexData, scrapedData, dmData, stats,
                       </a>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Messages Approval View */}
+          {activeView === 'messages' && (
+            <div id="messages" className="space-y-6">
+              {/* Filters */}
+              <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      placeholder="Search by name, company, headline, or LinkedIn post..."
+                      value={messageSearchTerm}
+                      onChange={(e) => setMessageSearchTerm(e.target.value)}
+                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    />
+                  </div>
+                  {messageSearchTerm && (
+                    <button
+                      onClick={() => setMessageSearchTerm('')}
+                      className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      Clear Search
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Results Summary */}
+              <div className="bg-gradient-to-r from-cyan-50 to-sky-50 rounded-lg border border-cyan-200 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <p className="text-sm text-slate-600">Total Messages</p>
+                      <p className="text-2xl font-bold text-slate-900">{filteredMessages.length}</p>
+                    </div>
+                    <div className="h-12 w-px bg-cyan-200"></div>
+                    <div>
+                      <p className="text-sm text-slate-600">Approved</p>
+                      <p className="text-2xl font-bold text-green-600">
+                        {filteredMessages.filter(m => m.Approval === 'approval').length}
+                      </p>
+                    </div>
+                    <div className="h-12 w-px bg-cyan-200"></div>
+                    <div>
+                      <p className="text-sm text-slate-600">Rejected</p>
+                      <p className="text-2xl font-bold text-red-600">
+                        {filteredMessages.filter(m => m.Approval === 'reject').length}
+                      </p>
+                    </div>
+                    <div className="h-12 w-px bg-cyan-200"></div>
+                    <div>
+                      <p className="text-sm text-slate-600">Sent</p>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {filteredMessages.filter(m => m.Approval === 'sent').length}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Messages Table */}
+              <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Name</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Company</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Headline</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">LinkedIn Post</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Profile</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Approval</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {filteredMessages.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
+                            {localSendMessageData.length === 0 
+                              ? 'No messages found. Messages will appear here when ready for approval.'
+                              : 'No entries match your search.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredMessages.map((entry) => {
+                          const badge = getApprovalBadge(entry.Approval);
+                          const isUpdating = updatingMessageId === entry.rowId;
+                          
+                          return (
+                            <tr key={entry.rowId} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 bg-gradient-to-br from-cyan-400 to-sky-500 rounded-full flex items-center justify-center text-white text-xs font-semibold">
+                                    {entry['First Name']?.[0]?.toUpperCase() || ''}{entry['Last Name']?.[0]?.toUpperCase() || ''}
+                                  </div>
+                                  <div className="text-sm font-medium text-slate-900">
+                                    {entry['First Name']} {entry['Last Name']}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="text-sm text-slate-700">
+                                  {entry.Company || '-'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                {entry.Headline ? (
+                                  <div className="max-w-xs">
+                                    {expandedHeadlines.has(entry.rowId) ? (
+                                      <div className="text-sm text-slate-700">
+                                        <div className="mb-1 whitespace-pre-wrap break-words">{entry.Headline}</div>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedHeadlines(prev => {
+                                              const newSet = new Set(prev);
+                                              newSet.delete(entry.rowId);
+                                              return newSet;
+                                            });
+                                          }}
+                                          className="text-xs text-cyan-600 hover:text-cyan-700 font-medium hover:underline"
+                                        >
+                                          Show less
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="text-sm text-slate-700">
+                                        <div className="line-clamp-2 break-words">
+                                          {entry.Headline}
+                                        </div>
+                                        {entry.Headline.length > 60 && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setExpandedHeadlines(prev => new Set(prev).add(entry.rowId));
+                                            }}
+                                            className="text-xs text-cyan-600 hover:text-cyan-700 font-medium hover:underline mt-1"
+                                          >
+                                            Show full headline
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-sm text-slate-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4">
+                                {entry['Linkedin Post'] ? (
+                                  <a
+                                    href={entry['Linkedin Post']}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-cyan-600 hover:text-cyan-700 font-medium hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={entry['Linkedin Post']}
+                                  >
+                                    {getPostAuthorName(entry['Linkedin Post'])}
+                                  </a>
+                                ) : (
+                                  <span className="text-sm text-slate-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4">
+                                {entry['Profile URL'] ? (
+                                  <a
+                                    href={entry['Profile URL']}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-cyan-600 hover:text-cyan-700 font-medium hover:underline truncate max-w-md block"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    View Profile
+                                  </a>
+                                ) : (
+                                  <span className="text-sm text-slate-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={badge.className}>
+                                  {badge.label}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                  {isUpdating ? (
+                                    <div className="flex items-center gap-2 text-slate-500">
+                                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                      </svg>
+                                      <span className="text-xs">Updating...</span>
+                                    </div>
+                                  ) : entry.Approval === 'sent' ? (
+                                    <span className="px-3 py-1.5 text-sm text-slate-600 italic">Sent (System)</span>
+                                  ) : (
+                                    <select
+                                      value={entry.Approval}
+                                      onChange={(e) => {
+                                        const newApproval = e.target.value as 'approval' | 'reject';
+                                        // Only allow approval or reject - sent is system-managed
+                                        if (newApproval === 'approval' || newApproval === 'reject') {
+                                          handleMessageApprovalUpdate(entry, newApproval);
+                                        }
+                                      }}
+                                      className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 bg-white text-slate-700"
+                                      disabled={isUpdating}
+                                    >
+                                      <option value="approval">Approved</option>
+                                      <option value="reject">Rejected</option>
+                                    </select>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                  <div className="text-sm text-slate-600">
+                    Showing <span className="font-semibold text-slate-900">{filteredMessages.length}</span> of{' '}
+                    <span className="font-semibold text-slate-900">{localSendMessageData.length}</span> messages
+                  </div>
                 </div>
               </div>
             </div>

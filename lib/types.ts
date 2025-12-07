@@ -39,6 +39,18 @@ export interface DMEntry {
   post_topic?: string;
 }
 
+// Send Message Sheet - Messages awaiting approval
+export interface SendMessageEntry {
+  rowId: number;
+  'Linkedin Post': string;
+  'First Name': string;
+  'Last Name': string;
+  'Profile URL': string;
+  Headline?: string;
+  Company?: string;
+  Approval: 'approval' | 'reject' | 'sent';
+}
+
 // Combined stats for dashboard
 export interface DashboardStats {
   // Index stats
