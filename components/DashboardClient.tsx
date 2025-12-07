@@ -179,7 +179,15 @@ export default function DashboardClient({ indexData, scrapedData, dmData, sendMe
     
     // Merge and remove duplicates based on LinkedIn Post URL + First Name + Last Name
     const seen = new Set<string>();
-    const merged: Array<typeof scrapedLeads[0] & { source: 'scraped' | 'combined' }> = [];
+    type MergedLead = {
+      rowId: string;
+      'Linkedin Post': string;
+      'First Name': string;
+      'Last Name': string;
+      'Profile URL': string;
+      source: 'scraped' | 'combined';
+    };
+    const merged: MergedLead[] = [];
     
     [...scrapedLeads, ...combinedLeads].forEach(lead => {
       const key = `${lead['Linkedin Post']}_${lead['First Name']}_${lead['Last Name']}`;
@@ -315,14 +323,26 @@ export default function DashboardClient({ indexData, scrapedData, dmData, sendMe
 
   // Get unique values for filters (normalized) - only if data exists
   const uniqueCompanies = useMemo(() => {
-    if (!hasCompanyData) return [];
-    const companies = new Set(scrapedData.map(e => e.Company?.trim()).filter(c => c && c !== ''));
+    if (!hasCompanyData) return [] as string[];
+    const companies = new Set<string>();
+    scrapedData.forEach(e => {
+      const company = e.Company?.trim();
+      if (company && company !== '') {
+        companies.add(company);
+      }
+    });
     return Array.from(companies).sort();
   }, [scrapedData, hasCompanyData]);
 
   const uniqueRoles = useMemo(() => {
-    if (!hasRoleData) return [];
-    const roles = new Set(scrapedData.map(e => e.Role?.trim()).filter(r => r && r !== ''));
+    if (!hasRoleData) return [] as string[];
+    const roles = new Set<string>();
+    scrapedData.forEach(e => {
+      const role = e.Role?.trim();
+      if (role && role !== '') {
+        roles.add(role);
+      }
+    });
     return Array.from(roles).sort();
   }, [scrapedData, hasRoleData]);
 
