@@ -916,7 +916,12 @@ export default function DashboardClient({ indexData, scrapedData, dmData, sendMe
                     .map((post, idx) => {
                       const postScraped = scrapedData.filter(e => e.post_gid === post.gid);
                       const postScrapedCount = postScraped.length;
-                      const postLeads = allLeads.filter(lead => lead['Linkedin Post'] === post.postUrl);
+                      // Use normalized URL matching for leads (same as filteredLeads logic)
+                      const normalizedPostUrl = normalizeUrl(post.postUrl);
+                      const postLeads = allLeads.filter(lead => {
+                        const normalizedLeadUrl = normalizeUrl(lead['Linkedin Post'] || '');
+                        return normalizedLeadUrl === normalizedPostUrl;
+                      });
                       const leadCount = postLeads.length;
                       
                       // Get post author name from scraped data (LinkedIn Post User)

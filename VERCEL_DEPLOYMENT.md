@@ -55,3 +55,5 @@ The app uses Next.js 14 with:
 
 No additional configuration needed - Vercel auto-detects Next.js projects.
 
+
+
